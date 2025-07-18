@@ -1,8 +1,11 @@
-from scapy.all import sniff, IP, TCP
-from collections import defaultdict
+import numpy as np
 import threading
 import queue
 
+
+from scapy.all import sniff, IP, TCP
+from collections import defaultdict
+from sklearn.ensemble import IsolationForest
 
 """
 Name: PacketCapture
@@ -100,3 +103,73 @@ class TrafficAnalyzer:
             'window_size': packet[TCP].window
         }
 
+"""
+Name: DetectionEngine
+Description: Hybrid detection system that is signature based and anomaly based
+"""
+class DetectionEngine:
+    def __init__(self):
+        # Isolation Forest Model to detect anomalies 
+        # Predifined rules for specifc attack patterns
+        self.anomaly_detector = IsolationForest(
+            contamination=0.1,
+            random_state=42
+        )
+
+    def load_signature_rules(self):
+        return {
+            'syn_flood': {
+                'condition': lambda features: (
+                    features['tcp_flags'] == 2 and # SYN flag
+                    features['packet_rate'] > 100
+                )
+            },
+            'port_scan': {
+                'condition': lambda features: (
+                    features['packet_size'] < 100 and 
+                    features['packet_rate'] > 50
+                )
+            }
+        }
+
+    # Train model using a dataset of normal traffic features
+    def train_anomaly_detector(self, normal_traffic_data):
+        self.anomaly_detector.fit(normal_traffic_data)
+
+    # Evaluate network traffic features for potential threats
+    def detect_threats(self, features):
+        threats = []
+
+        # Signature-based detection
+        # - Iteratively go through each rule
+        # - Apply condition to the rule
+        # - If it matches, then the threat is recorded with high confidence
+        for rule_name, rule in self.load_signature_rules.items():
+             if rule['condition'](features):
+                threats.append({
+                    'type': 'signature',
+                    'rule': rule_name,
+                    'confidence': 1.0
+                  })
+
+        # Anomaly-based detection
+        # - Processes the packet size, packet rate, and byte rate in the feature vector throguh the IF model
+        # - Calculate the anomaly score
+        # - If score indicates unusual behavior, then it is an anomaly and produces a high confidence score based on its severity
+        feature_vector = np.array([[
+            features['packet_size'],
+            features['packet_rate'],
+            features['byte_rate']
+        ]])
+
+        anomaly_score = self.anomaly_detector.score_samples(feature_vector)[0]
+        if anomaly_score < -0.5: # Threshold for anomaly detection
+            threats.append({
+                'type': 'anomaly',
+                'score':anomaly_score,
+                'confidence':min(1.0, abs(anomaly_score))
+            })
+
+        # Return the aggregated list of threats
+        return threats
+    
