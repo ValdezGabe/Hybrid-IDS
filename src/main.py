@@ -1,11 +1,13 @@
 import numpy as np
 import threading
 import queue
-
+import logging
+import json
 
 from scapy.all import sniff, IP, TCP
 from collections import defaultdict
 from sklearn.ensemble import IsolationForest
+from datetime import datetime
 
 """
 Name: PacketCapture
@@ -173,3 +175,81 @@ class DetectionEngine:
         # Return the aggregated list of threats
         return threats
     
+
+class AlertSystem:
+    def __init__(self, log_file = "ids_alerts.log"):
+        self.logger = logging.getLogger("IDS_Alerts")
+        self.logger.setLevel(logging.INFO)
+
+        handler = logging.FileHandler(log_file)
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s'
+        )
+
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+
+    def generate_alert(self, threat, packet_info):
+        alert = {
+            'timestamp': datetime.now().isoformat(),
+            'threat_type': threat['type'],
+            'source_ip': packet_info.get('source_ip'),
+            'destination_ip': packet_info.get('destination_ip'),
+            'confidence': threat.get('confidence', 0.0),
+            'details': threat
+        }
+
+        self.logger.warning(json.dumps(alert))
+
+        if threat['confidence'] > 0.8: 
+                self.logger.critical(
+                    f"High confidence threat detected: {json.dumps(alert)}"
+                )
+
+                # implement additional notification methods here
+                # (e.g., email, Slack, SIEM integration)
+
+
+class IntrusionDetectionSystem:
+    def __init__(self, interface='eth0'):
+        self.packet_capture = PacketCapture()
+        self.traffic_analyzer = TrafficAnalyzer()
+        self.detection_engine = DetectionEngine()
+        self.alert_system = AlertSystem()
+
+        self.interface = interface
+
+    def start(self):
+        print(f"Starting IDS on interface {self.interface}")
+        self.packet_capture.start_capture(self.interface)
+
+        while True:
+            try:
+                packet = self.packet_capture.packet_queue.get(timeout=1)
+                features = self.traffic_analyzer.analyze_packet(packet)
+
+                if features:
+                    threats = self.detection_engine.detect_threats(features)
+
+                    for threat in threats:
+                        packet_info = {
+                            'source_ip': packet[IP].src,
+                            'destination_ip': packet[IP].dst,
+                            'source_port': packet[TCP].sport,
+                            'destination_port': packet[TCP].dport
+                        }
+                        self.alert_system.generate_alert(threat, packet_info)
+
+            # 2 Exceptions: 
+            # - No packets available for processing
+            # - Stop IDS gracefully by halting packet capture and exiting the loop
+            except queue.Empty:
+                continue
+            except KeyboardInterrupt:
+                print("Stopping IDS...")
+                self.packet_capture.stop()
+                break
+
+if __name__ == "__main__":
+    ids = IntrusionDetectionSystem()
+    ids.start()
